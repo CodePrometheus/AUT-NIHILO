@@ -17,6 +17,11 @@ from collector import store
 
 SITES = {"motianlun": motianlun, "piaoniu": piaoniu}
 
+# Exit codes; the workflow stops scheduling runs on EXIT_FINISHED.
+EXIT_OK = 0
+EXIT_ALL_FAILED = 1
+EXIT_FINISHED = 3  # Every tracked session has started.
+
 # Unexpected payload shapes fail only the affected session, not the run.
 _SESSION_ERRORS = (client.FetchError, KeyError, TypeError, ValueError)
 
@@ -71,7 +76,8 @@ def main() -> int:
     """Collects all shows and writes the run's files.
 
     Returns:
-        Process exit code: 1 when every session failed, otherwise 0.
+        EXIT_FINISHED when no session is left to collect, EXIT_ALL_FAILED
+        when every session failed, otherwise EXIT_OK.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     now = datetime.datetime.now(config.TZ).replace(microsecond=0)
@@ -79,7 +85,7 @@ def main() -> int:
     results = [r for show in config.SHOWS for r in collect_show(api, show, now)]
     if not results:
         logging.info("No upcoming sessions.")
-        return 0
+        return EXIT_FINISHED
     root = os.environ.get("DATA_DIR", "data")
     prices = store.write_prices(results, now, root)
     log = store.append_runs(results, now, root)
@@ -101,7 +107,7 @@ def main() -> int:
             r.session.session_id or "(session list)",
             r.error,
         )
-    return 1 if len(failed) == len(results) else 0
+    return EXIT_ALL_FAILED if len(failed) == len(results) else EXIT_OK
 
 
 def _describe(error: Exception) -> str:

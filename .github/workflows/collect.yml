@@ -1,12 +1,15 @@
 name: collect
 
+# Each run schedules the next one, five minutes after its own start, so
+# collection does not depend on the scheduler. The cron entry only restarts
+# the chain if a run ever fails to schedule its successor.
 on:
   schedule:
-    # Off the top of the hour, when scheduled runs are most often delayed.
     - cron: "2/5 * * * *"
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -16,8 +19,12 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    env:
+      INTERVAL_S: 300
     steps:
+      - name: Note start time
+        run: echo "RUN_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
@@ -29,7 +36,12 @@ jobs:
 
       - run: python -m unittest discover -s tests -t .
 
-      - run: python -m collector.run
+      - name: Collect
+        id: collect
+        run: |
+          set +e
+          python -m collector.run
+          echo "code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Commit data
         if: ${{ !cancelled() }}
@@ -47,3 +59,22 @@ jobs:
             sleep $((attempt * 5))
           done
           exit 1
+
+      - name: Schedule next run
+        if: ${{ !cancelled() && steps.collect.outputs.code != '3' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wait=$(( RUN_STARTED + INTERVAL_S - $(date +%s) ))
+          if [ "$wait" -gt 0 ]; then
+            sleep "$wait"
+          fi
+          for attempt in 1 2 3; do
+            gh workflow run collect.yml --ref "$GITHUB_REF_NAME" && exit 0
+            sleep $((attempt * 2))
+          done
+          exit 1
+
+      - name: Fail when every session failed
+        if: ${{ steps.collect.outputs.code == '1' }}
+        run: exit 1

@@ -296,6 +296,13 @@ class CollectShowTest(unittest.TestCase):
         self.assertEqual(result.status, "failed")
 
 
+class MainTest(unittest.TestCase):
+
+    def test_reports_finished_when_no_session_is_upcoming(self):
+        with mock.patch.object(run, "collect_show", return_value=[]):
+            self.assertEqual(run.main(), run.EXIT_FINISHED)
+
+
 class StoreTest(unittest.TestCase):
 
     def setUp(self):
