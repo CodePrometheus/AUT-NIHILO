@@ -1140,3 +1140,10 @@ fetched_at,site,city,show_id,session_id,session_time,status,listings,requests,er
 2026-11-07T12:11:55+08:00,piaoniu,guangzhou,784190,14962113,2026-11-29T19:00:00+08:00,ok,60,12,
 2026-11-07T12:11:55+08:00,piaoniu,guangzhou,784190,14962114,2026-12-04T19:00:00+08:00,ok,56,12,
 2026-11-07T12:11:55+08:00,piaoniu,guangzhou,784190,14962115,2026-12-06T19:00:00+08:00,ok,39,12,
+2026-11-07T12:17:04+08:00,motianlun,changsha,69eb15cddabe840001c63c0e,,,failed,0,1,FetchError: https://m.motianlun.cn/showapi/pub/v3/show/69eb15cddabe840001c63c0e/sessionone: HTTP Error 418: 
+2026-11-07T12:17:04+08:00,motianlun,guangzhou,69eb16b469f432000151d062,,,failed,0,1,FetchError: https://m.motianlun.cn/showapi/pub/v3/show/69eb16b469f432000151d062/sessionone: HTTP Error 418: 
+2026-11-07T12:17:04+08:00,piaoniu,changsha,774654,14953266,2026-11-08T19:00:00+08:00,ok,7,12,
+2026-11-07T12:17:04+08:00,piaoniu,guangzhou,784190,14962112,2026-11-27T19:00:00+08:00,ok,61,12,
+2026-11-07T12:17:04+08:00,piaoniu,guangzhou,784190,14962113,2026-11-29T19:00:00+08:00,ok,64,12,
+2026-11-07T12:17:04+08:00,piaoniu,guangzhou,784190,14962114,2026-12-04T19:00:00+08:00,ok,55,12,
+2026-11-07T12:17:04+08:00,piaoniu,guangzhou,784190,14962115,2026-12-06T19:00:00+08:00,ok,42,12,
