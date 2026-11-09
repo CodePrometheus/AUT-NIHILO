@@ -60,6 +60,42 @@ jobs:
           done
           exit 1
 
+      - name: Check dashboard age
+        id: dashboard
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DASHBOARD_INTERVAL_S: 3600
+        run: |
+          last=$(gh api "repos/$GITHUB_REPOSITORY/commits?path=assets/dashboard-light.png&per_page=1" \
+            --jq '.[0].commit.committer.date // "1970-01-01T00:00:00Z"')
+          age=$(( $(date +%s) - $(date -d "$last" +%s) ))
+          echo "Dashboard last updated $last, ${age}s ago."
+          echo "due=$([ "$age" -ge "$DASHBOARD_INTERVAL_S" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Update dashboard
+        if: ${{ !cancelled() && steps.dashboard.outputs.due == 'true' }}
+        continue-on-error: true
+        env:
+          DASHBOARD_FONT: /usr/share/fonts/truetype/wqy/wqy-microhei.ttc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-wqy-microhei
+          pip install -r requirements-dashboard.txt
+          python -m unittest tests.test_dashboard
+          python -m dashboard.render
+          git add assets/dashboard-*.png
+          if git diff --cached --quiet; then
+            echo "Dashboard unchanged."
+            exit 0
+          fi
+          git commit --quiet -m "Update dashboard $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')"
+          for attempt in 1 2 3; do
+            git pull --rebase --quiet && git push --quiet && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1
+
       - name: Schedule next run
         if: ${{ !cancelled() && steps.collect.outputs.code != '3' }}
         env:
