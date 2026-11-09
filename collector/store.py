@@ -4,6 +4,7 @@ from collections.abc import Iterable
 import csv
 import dataclasses
 import datetime
+import glob
 import os
 from typing import Any
 
@@ -125,6 +126,29 @@ def append_runs(
                 "error": result.error,
             })
     return path
+
+
+def last_session_times(root: str) -> dict[tuple[str, str], datetime.datetime]:
+    """Returns the latest session start logged for each show.
+
+    Args:
+        root: Data directory.
+
+    Returns:
+        Start time of the last known session, keyed by (site, show_id). Shows
+        whose session list was never fetched are absent.
+    """
+    latest: dict[tuple[str, str], datetime.datetime] = {}
+    for path in sorted(glob.glob(os.path.join(root, "runs", "*.csv"))):
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if not row["session_time"]:
+                    continue
+                key = (row["site"], row["show_id"])
+                start = datetime.datetime.fromisoformat(row["session_time"])
+                if key not in latest or start > latest[key]:
+                    latest[key] = start
+    return latest
 
 
 def _session_columns(session: models.Session) -> dict[str, Any]:

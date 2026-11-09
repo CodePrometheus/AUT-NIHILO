@@ -27,7 +27,10 @@ _SESSION_ERRORS = (client.FetchError, KeyError, TypeError, ValueError)
 
 
 def collect_show(
-    api: client.Client, show: config.Show, now: datetime.datetime
+    api: client.Client,
+    show: config.Show,
+    now: datetime.datetime,
+    last_session: datetime.datetime | None = None,
 ) -> list[models.SessionResult]:
     """Fetches every session of `show` that has not started yet.
 
@@ -35,11 +38,16 @@ def collect_show(
         api: HTTP client.
         show: Show to collect.
         now: Run start time; sessions starting at or before it are skipped.
+        last_session: Start of the show's last known session. When it has
+            passed the show is over and no request is sent.
 
     Returns:
         One result per upcoming session, or a single failed result with an
-        empty session id when the session list could not be fetched.
+        empty session id when the session list could not be fetched. Empty
+        when the show is over.
     """
+    if last_session is not None and last_session <= now:
+        return []
     site = SITES[show.site]
     start = api.requests
     try:
@@ -81,12 +89,19 @@ def main() -> int:
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     now = datetime.datetime.now(config.TZ).replace(microsecond=0)
+    root = os.environ.get("DATA_DIR", "data")
+    last_sessions = store.last_session_times(root)
     api = client.Client()
-    results = [r for show in config.SHOWS for r in collect_show(api, show, now)]
+    results = [
+        result
+        for show in config.SHOWS
+        for result in collect_show(
+            api, show, now, last_sessions.get((show.site, show.show_id))
+        )
+    ]
     if not results:
         logging.info("No upcoming sessions.")
         return EXIT_FINISHED
-    root = os.environ.get("DATA_DIR", "data")
     prices = store.write_prices(results, now, root)
     log = store.append_runs(results, now, root)
     failed = [r for r in results if r.error]

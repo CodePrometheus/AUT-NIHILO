@@ -285,6 +285,18 @@ class CollectShowTest(unittest.TestCase):
         self.assertEqual(bad.status, "failed")
         self.assertIn("KeyError", bad.error)
 
+    def test_skips_show_whose_last_session_has_started(self):
+        site = mock.Mock()
+        api = FakeApi({})
+        earlier = _NOW - datetime.timedelta(minutes=1)
+
+        with mock.patch.dict(run.SITES, {"motianlun": site}):
+            results = run.collect_show(api, _MTL_SHOW, _NOW, earlier)
+
+        self.assertEqual(results, [])
+        site.list_sessions.assert_not_called()
+        self.assertEqual(api.requests, 0)
+
     def test_records_session_list_failure(self):
         site = mock.Mock()
         site.list_sessions.side_effect = client.FetchError("timed out")
@@ -300,7 +312,8 @@ class MainTest(unittest.TestCase):
 
     def test_reports_finished_when_no_session_is_upcoming(self):
         with mock.patch.object(run, "collect_show", return_value=[]):
-            self.assertEqual(run.main(), run.EXIT_FINISHED)
+            with mock.patch.dict(os.environ, {"DATA_DIR": tempfile.mkdtemp()}):
+                self.assertEqual(run.main(), run.EXIT_FINISHED)
 
 
 class StoreTest(unittest.TestCase):
@@ -329,6 +342,27 @@ class StoreTest(unittest.TestCase):
     def test_skips_price_file_without_listings(self):
         empty = [models.SessionResult(self.results[0].session)]
         self.assertIsNone(store.write_prices(empty, _NOW, self.root))
+
+    def test_reads_last_session_time_per_show(self):
+        later = models.Session(
+            _MTL_SHOW, "s2", _LATER + datetime.timedelta(days=2)
+        )
+        list_failed = models.Session(_MTL_SHOW, "", None)
+        store.append_runs(self.results, _NOW, self.root)
+        store.append_runs(
+            [
+                models.SessionResult(later),
+                models.SessionResult(list_failed, error="FetchError: x"),
+            ],
+            _NOW + datetime.timedelta(days=1),
+            self.root,
+        )
+
+        latest = store.last_session_times(self.root)
+
+        self.assertEqual(
+            latest, {("motianlun", "show-1"): later.session_time}
+        )
 
     def test_appends_fetch_log_with_single_header(self):
         store.append_runs(self.results, _NOW, self.root)
