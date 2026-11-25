@@ -23,21 +23,19 @@ class DashboardData:
         start: First collection time in the data.
         end: Last collection time in the data.
         sessions: Session labels ("MM-DD") in start order.
-        lowest: Lowest price per (site, session).
         listings: Listing count per (site, session).
-        best: Lowest price per session across both sites.
-        tier_session: Session whose tiers are broken down.
-        tiers: Lowest price per (site, face value) for `tier_session`.
+        best: Lowest site median per session and time bucket.
+        best_sites: Sites matching each session's last value in best.
+        tiers: Lowest price per (site, session, face value).
     """
 
     start: datetime.datetime
     end: datetime.datetime
     sessions: list[str]
-    lowest: dict[tuple[str, str], Series]
     listings: dict[tuple[str, str], Series]
     best: dict[str, Series]
-    tier_session: str
-    tiers: dict[tuple[str, int], Series]
+    best_sites: dict[str, tuple[str, ...]]
+    tiers: dict[tuple[str, str, int], Series]
 
 
 def load(root: str, city: str) -> DashboardData:
@@ -67,27 +65,21 @@ def load(root: str, city: str) -> DashboardData:
     sessions = [s for (s,) in con.sql(
         "select sess from p group by sess order by min(session_time)"
     ).fetchall()]
-    lowest = _series(con, "site, sess", "min(price)")
-    best = {
-        key[0]: value
-        for key, value in _series(con, "sess", "min(price)").items()
-    }
-    tier_session = max(best, key=lambda s: _rise(best[s]))
+    best, best_sites = _best_prices(_series(con, "site, sess", "min(price)"))
     return DashboardData(
         start=_local(start),
         end=_local(end),
         sessions=sessions,
-        lowest=lowest,
         listings=_series(con, "site, sess", "count(*)"),
         best=best,
-        tier_session=tier_session,
+        best_sites=best_sites,
         tiers={
-            (site, int(face)): value
-            for (site, face), value in _series(
+            (site, session, int(face)): value
+            for (site, session, face), value in _series(
                 con,
-                "site, face_value",
+                "site, sess, face_value",
                 "min(price)",
-                f"sess = {_literal(tier_session)} and face_value is not null",
+                "face_value is not null",
             ).items()
         },
     )
@@ -113,9 +105,24 @@ def _series(con, keys, metric, where="true"):
     return out
 
 
-def _rise(series: Series) -> float:
-    values = series[1]
-    return (values[-1] - values[0]) / values[0]
+def _best_prices(site_lowest):
+    by_session: dict[str, dict[datetime.datetime, dict[str, float]]] = {}
+    for (site, session), (times, prices) in site_lowest.items():
+        buckets = by_session.setdefault(session, {})
+        for time, price in zip(times, prices):
+            buckets.setdefault(time, {})[site] = price
+
+    best = {}
+    best_sites = {}
+    for session, buckets in by_session.items():
+        times = sorted(buckets)
+        prices = [min(buckets[time].values()) for time in times]
+        best[session] = (times, prices)
+        best_sites[session] = tuple(
+            site for site, price in buckets[times[-1]].items()
+            if price == prices[-1]
+        )
+    return best, best_sites
 
 
 def _literal(text: str) -> str:

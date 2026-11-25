@@ -18,6 +18,21 @@
 ## 价格走势
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-dark.png">
-  <img src="assets/dashboard-light.png" width="100%" alt="广州站二手票价看板">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-summary-dark.png">
+  <img src="assets/dashboard-summary-light.png" width="100%" alt="广州站各场当前最低价及渠道">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-12-dark.png">
+  <img src="assets/dashboard-12-light.png" width="100%" alt="12 月各票档最低价">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-11-dark.png">
+  <img src="assets/dashboard-11-light.png" width="100%" alt="11 月各票档最低价">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/dashboard-listings-dark.png">
+  <img src="assets/dashboard-listings-light.png" width="100%" alt="各平台在售挂单数">
 </picture>

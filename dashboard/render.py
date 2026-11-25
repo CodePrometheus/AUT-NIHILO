@@ -6,6 +6,7 @@ Reads DATA_DIR (default "data") and writes OUT_DIR (default "assets").
 
 import os
 import sys
+from itertools import batched, cycle, groupby
 
 import matplotlib
 
@@ -34,10 +35,12 @@ TEXT = {
     "title": "孙燕姿《就在日落以后》广州站 · 二手票价",
     "span": "{start} 至 {end} · 每 {minutes} 分钟取中位数",
     "stat": "{session} 场 · 当前最低价",
+    "channel": "渠道 {site}",
     "first": "首日 {price}",
-    "lowest": "最低价 · {session} 场",
-    "tiers": "{session} 场各票档最低价 · {site}",
-    "listings": "在售挂单数 · {site}",
+    "tiers": "{month} 月 · 各票档最低价",
+    "tier_panel": "{session} 场 · {site}",
+    "listings": "在售挂单数",
+    "no_data": "暂无采样数据",
     "face": "票面 {face}",
     "session": "{session} 场",
     "min": "最低",
@@ -66,6 +69,9 @@ THEMES = {
 _WIDTH = 16.0
 _MARGIN = 0.22
 _GAP = 0.16
+_HEADER_H = 0.75
+_INNER_W = _WIDTH - 2 * _MARGIN
+_HALF_W = (_INNER_W - _GAP) / 2
 _STAT_H = 1.45
 _PLOT_H = 2.25
 _ROW_H = 0.23
@@ -139,6 +145,20 @@ class _Board:
         ax.set_facecolor(self.theme["panel"])
         return ax
 
+    def save(self, path):
+        self.fig.savefig(path, facecolor=self.theme["canvas"])
+        plt.close(self.fig)
+        _compress(path, self.theme)
+
+
+def _section(theme_name, title, row_heights):
+    height = (2 * _MARGIN + _HEADER_H + sum(row_heights)
+              + _GAP * (len(row_heights) - 1))
+    board = _Board(THEMES[theme_name], height)
+    board.text(_MARGIN, _MARGIN + 0.05, title, fontsize=17,
+               color=board.theme["ink"], weight="bold", va="top")
+    return board
+
 
 def _gapped(times, values):
     """Inserts a break wherever collection paused."""
@@ -186,6 +206,10 @@ def _time_series(board, x, top, w, title, rows, fmt, span, legend_rows):
     """Draws a time-series panel whose legend lists min, max and last."""
     th = board.theme
     board.panel(x, top, w, _series_height(legend_rows), title)
+    if not rows:
+        board.text(x + w / 2, top + 0.42 + _PLOT_H / 2, TEXT["no_data"],
+                   fontsize=10, color=th["muted"], ha="center", va="center")
+        return
     ax = board.axes(x + 0.72, top + 0.42, w - 0.9, _PLOT_H)
     values = [v for _, _, (_, ys) in rows for v in ys]
     low, high = min(values), max(values)
@@ -202,8 +226,13 @@ def _time_series(board, x, top, w, title, rows, fmt, span, legend_rows):
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.tick_params(colors=th["muted"], labelsize=8, length=0, pad=5)
-    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 12]))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    ax.tick_params(axis="x", labelsize=11, labelcolor=th["ink2"])
+    locator = mdates.AutoDateLocator()
+    formatter = mdates.AutoDateFormatter(locator)
+    formatter.scaled[1] = "%m-%d"
+    formatter.scaled[1 / 24] = "%m-%d %H:%M"
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(5))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: fmt(v)))
     legend_top = top + 0.42 + _PLOT_H + 0.34
@@ -226,19 +255,22 @@ def _time_series(board, x, top, w, title, rows, fmt, span, legend_rows):
                        color=th["ink"], ha="right", va="top")
 
 
-def _stat(board, x, top, w, session, series):
+def _stat(board, x, top, w, session, series, sites):
     """Draws a stat panel: lowest price now, change since the first day."""
     th = board.theme
     times, values = series
     board.panel(x, top, w, _STAT_H, TEXT["stat"].format(session=session))
     board.text(x + 0.18, top + 0.48, _money(values[-1]), fontsize=27,
                color=th["ink"], va="top", weight="bold")
+    channel = " / ".join(label for site, label in SITES if site in sites)
+    board.text(x + 0.2, top + 0.90, TEXT["channel"].format(site=channel),
+               fontsize=10, color=th["ink2"], va="top")
     change = (values[-1] - values[0]) / values[0] * 100
     rising = change >= 0
     arrow = "▲" if rising else "▼"
-    board.text(x + 0.2, top + 1.0, f"{arrow} {abs(change):.1f}%", fontsize=10,
+    board.text(x + 0.2, top + 1.15, f"{arrow} {abs(change):.1f}%", fontsize=10,
                color=th["up" if rising else "down"], va="top", weight="bold")
-    board.text(x + 1.05, top + 1.0,
+    board.text(x + 1.05, top + 1.15,
                TEXT["first"].format(price=_money(values[0])), fontsize=9,
                color=th["ink2"], va="top")
     ax = board.axes(x + w * 0.56, top + 0.42, w * 0.4, _STAT_H - 0.6)
@@ -251,68 +283,68 @@ def _stat(board, x, top, w, session, series):
     _gradient_fill(ax, xs, ys, th["series"][0], 0.3)
 
 
-def render(data, theme_name, path):
-    """Draws the dashboard for one theme and saves it as a PNG.
-
-    Args:
-        data: Aggregated series.
-        theme_name: Key of THEMES.
-        path: Output file.
-    """
-    th = THEMES[theme_name]
-    span = (data.start, data.end)
-    faces = sorted({face for _, face in data.tiers})
-    halves = (len(data.sessions) + 1) // 2
-    height = (2 * _MARGIN + 0.75 + _STAT_H + _GAP
-              + halves * (_series_height(len(SITES)) + _GAP)
-              + _series_height(len(faces)) + _GAP
-              + _series_height(len(data.sessions)))
-    board = _Board(th, height)
-    board.text(_MARGIN, _MARGIN + 0.05, TEXT["title"],
-               fontsize=17, color=th["ink"], weight="bold", va="top")
+def render_summary(data, theme_name, path):
+    """Draws the latest prices and their channels, grouped by show month."""
+    rows = [row for _, month in groupby(data.sessions, key=lambda s: s[:2])
+            for row in batched(month, 2)]
+    board = _section(theme_name, TEXT["title"], [_STAT_H] * len(rows))
     board.text(_WIDTH - _MARGIN, _MARGIN + 0.08,
                TEXT["span"].format(
                    start=f"{data.start:%m-%d %H:%M}",
                    end=f"{data.end:%m-%d %H:%M}",
                    minutes=dashboard_data.BUCKET_MINUTES),
-               fontsize=10, color=th["ink2"], va="top", ha="right")
-    inner = _WIDTH - 2 * _MARGIN
-    top = _MARGIN + 0.75
-    stat_w = (inner - (len(data.sessions) - 1) * _GAP) / len(data.sessions)
-    for i, session in enumerate(data.sessions):
-        _stat(board, _MARGIN + i * (stat_w + _GAP), top, stat_w, session,
-              data.best[session])
-    top += _STAT_H + _GAP
-    half_w = (inner - _GAP) / 2
-    for i, session in enumerate(data.sessions):
-        rows = [(label, th["series"][j], data.lowest[(site, session)])
-                for j, (site, label) in enumerate(SITES)
-                if (site, session) in data.lowest]
-        _time_series(board, _MARGIN + (i % 2) * (half_w + _GAP), top, half_w,
-                     TEXT["lowest"].format(session=session), rows, _money,
-                     span, len(SITES))
-        if i % 2 or i == len(data.sessions) - 1:
-            top += _series_height(len(SITES)) + _GAP
-    for i, (site, label) in enumerate(SITES):
-        rows = [(TEXT["face"].format(face=face), th["series"][j],
-                 data.tiers[(site, face)])
-                for j, face in enumerate(faces) if (site, face) in data.tiers]
-        _time_series(board, _MARGIN + i * (half_w + _GAP), top, half_w,
-                     TEXT["tiers"].format(session=data.tier_session,
-                                          site=label),
-                     rows, _money, span, len(faces))
-    top += _series_height(len(faces)) + _GAP
-    for i, (site, label) in enumerate(SITES):
-        rows = [(TEXT["session"].format(session=session), th["series"][j],
+               fontsize=10, color=board.theme["ink2"], va="top", ha="right")
+    top = _MARGIN + _HEADER_H
+    for row in rows:
+        for i, session in enumerate(row):
+            _stat(board, _MARGIN + i * (_HALF_W + _GAP), top, _HALF_W,
+                  session, data.best[session], data.best_sites[session])
+        top += _STAT_H + _GAP
+    board.save(path)
+
+
+def _render_series(data, theme_name, path, title, panels, fmt):
+    heights = [_series_height(len(rows)) for _, rows in panels]
+    board = _section(theme_name, title, heights)
+    span = (min(times[0] for times, _ in data.best.values()), data.end)
+    top = _MARGIN + _HEADER_H
+    for label, rows in panels:
+        _time_series(board, _MARGIN, top, _INNER_W, label, rows, fmt,
+                     span, len(rows))
+        top += _series_height(len(rows)) + _GAP
+    board.save(path)
+
+
+def render_tiers(data, month, theme_name, path):
+    """Draws one month's ticket-tier prices, one channel per panel."""
+    panels = []
+    series_colors = THEMES[theme_name]["series"]
+    for session in data.sessions:
+        if not session.startswith(month + "-"):
+            continue
+        faces = sorted({face for _, date, face in data.tiers if date == session})
+        for site, label in SITES:
+            rows = [(TEXT["face"].format(face=face), color,
+                     data.tiers[(site, session, face)])
+                    for face, color in zip(faces, cycle(series_colors))
+                    if (site, session, face) in data.tiers]
+            panels.append((TEXT["tier_panel"].format(session=session,
+                                                      site=label), rows))
+    _render_series(data, theme_name, path,
+                   TEXT["tiers"].format(month=int(month)), panels, _money)
+
+
+def render_listings(data, theme_name, path):
+    """Draws the listing counts for all sessions by channel."""
+    panels = []
+    series_colors = THEMES[theme_name]["series"]
+    for site, label in SITES:
+        rows = [(TEXT["session"].format(session=session), color,
                  data.listings[(site, session)])
-                for j, session in enumerate(data.sessions)
+                for session, color in zip(data.sessions, cycle(series_colors))
                 if (site, session) in data.listings]
-        _time_series(board, _MARGIN + i * (half_w + _GAP), top, half_w,
-                     TEXT["listings"].format(site=label), rows, _count, span,
-                     len(data.sessions))
-    board.fig.savefig(path, facecolor=th["canvas"])
-    plt.close(board.fig)
-    _compress(path, th)
+        panels.append((label, rows))
+    _render_series(data, theme_name, path, TEXT["listings"], panels, _count)
 
 
 def _compress(path, theme):
@@ -332,14 +364,20 @@ def _compress(path, theme):
 
 
 def main() -> int:
-    """Renders both themes from DATA_DIR into OUT_DIR."""
+    """Renders the summary, monthly tiers and listings in both themes."""
     plt.rcParams["font.family"] = font_family()
     data = dashboard_data.load(os.environ.get("DATA_DIR", "data"), CITY)
     out = os.environ.get("OUT_DIR", "assets")
     os.makedirs(out, exist_ok=True)
+    months = sorted({session[:2] for session in data.sessions}, reverse=True)
     for theme_name in THEMES:
-        path = os.path.join(out, f"dashboard-{theme_name}.png")
-        render(data, theme_name, path)
+        render_summary(data, theme_name, os.path.join(
+            out, f"dashboard-summary-{theme_name}.png"))
+        for month in months:
+            render_tiers(data, month, theme_name, os.path.join(
+                out, f"dashboard-{month}-{theme_name}.png"))
+        render_listings(data, theme_name, os.path.join(
+            out, f"dashboard-listings-{theme_name}.png"))
     return 0
 
 
